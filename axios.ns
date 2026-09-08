@@ -1,0 +1,139 @@
+// HTTP client -- JSON auto encode/decode, cookie jar, header default
+// per instance. Lewat plugin native `http` -- butuh `make plugins`.
+
+fungsi cari(teks, sub) {
+    buat n = panjang(teks);
+    buat m = panjang(sub);
+    jika m == 0 {
+        hasil 0;
+    }
+    untuk (buat i = 0; i + m <= n; i = i + 1) {
+        jika potong(teks, i, i + m) == sub {
+            hasil i;
+        }
+    }
+    hasil -1;
+}
+
+kelas Axios {
+    fungsi constructor(base_url) {
+        ini.base_url = base_url;
+        ini.header_tambahan = peta_baru();
+        ini.cookie_jar = peta_baru();
+        ini.http = kosong;
+        coba {
+            ini.http = muat_plugin("http");
+        } tangkap (e) {
+            ini.http = kosong;
+        }
+    }
+
+    fungsi atur_header(nama, nilai) {
+        ini.header_tambahan[nama] = nilai;
+    }
+
+    fungsi cookie_teks() {
+        buat kunci = peta_kunci(ini.cookie_jar);
+        buat bagian = [];
+        untuk (buat i = 0; i < panjang(kunci); i = i + 1) {
+            tambah(bagian, kunci[i] + "=" + ini.cookie_jar[kunci[i]]);
+        }
+        hasil gabung(bagian, "; ");
+    }
+
+    fungsi simpan_cookie(header) {
+        buat sc = header["set-cookie"];
+        jika sc == kosong {
+            hasil kosong;
+        }
+        buat cnilai = sc;
+        buat cpos = cari(sc, ";");
+        jika cpos >= 0 {
+            cnilai = potong(sc, 0, cpos);
+        }
+        buat eqpos = cari(cnilai, "=");
+        jika eqpos >= 0 {
+            ini.cookie_jar[potong(cnilai, 0, eqpos)] = potong(cnilai, eqpos + 1, panjang(cnilai));
+        }
+    }
+
+    fungsi minta(metode, path, data) {
+        buat tubuh = "";
+        jika data != kosong {
+            tubuh = json_encode(data);
+        }
+
+        jika ini.http == kosong {
+            hasil ini.minta_polos(metode, path, tubuh);
+        }
+
+        buat header = peta_baru();
+        buat kh = peta_kunci(ini.header_tambahan);
+        untuk (buat i = 0; i < panjang(kh); i = i + 1) {
+            header[kh[i]] = ini.header_tambahan[kh[i]];
+        }
+        jika panjang(ini.cookie_jar) > 0 {
+            header["Cookie"] = ini.cookie_teks();
+        }
+        jika data != kosong {
+            header["Content-Type"] = "application/json";
+        }
+        buat resp = json_decode(ini.http.minta(metode, ini.base_url, path, json_encode(header), tubuh));
+        jika !resp.ok {
+            hasil resp;
+        }
+        ini.simpan_cookie(resp.header);
+        hasil ini.bungkus(resp.status, resp.header, resp.tubuh);
+    }
+
+    // Tanpa plugin `http`: cuma GET/POST lewat http_get/http_post inti,
+    // gak ada header custom/cookie jar/response header (bukan bagian
+    // dari kontrak builtin inti). PUT/DELETE butuh plugin-nya.
+    fungsi minta_polos(metode, path, tubuh) {
+        jika metode != "GET" && metode != "POST" {
+            lempar "Axios: method '" + metode + "' butuh plugin http (make plugins) -- tanpa plugin cuma GET/POST";
+        }
+        coba {
+            buat url_penuh = ini.base_url + path;
+            buat resp = kosong;
+            jika metode == "GET" {
+                resp = http_get(url_penuh);
+            } lain {
+                resp = http_post(url_penuh, tubuh, "application/json");
+            }
+            hasil ini.bungkus(resp.status, peta_baru(), resp.tubuh);
+        } tangkap (e) {
+            buat keluar = peta_baru();
+            keluar["ok"] = salah;
+            keluar["error"] = e.pesan;
+            hasil keluar;
+        }
+    }
+
+    fungsi bungkus(status, header, tubuh_mentah) {
+        buat keluar = peta_baru();
+        keluar["ok"] = benar;
+        keluar["status"] = status;
+        keluar["header"] = header;
+        buat parsed = json_decode_aman(tubuh_mentah);
+        jika parsed != kosong {
+            keluar["data"] = parsed;
+        } lain {
+            keluar["data"] = tubuh_mentah;
+        }
+        hasil keluar;
+    }
+
+    fungsi get(path) {
+        hasil ini.minta("GET", path, kosong);
+    }
+    fungsi post(path, data) {
+        hasil ini.minta("POST", path, data);
+    }
+    fungsi put(path, data) {
+        hasil ini.minta("PUT", path, data);
+    }
+    fungsi hapus(path) {
+        hasil ini.minta("DELETE", path, kosong);
+    }
+}
